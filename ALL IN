@@ -1,0 +1,113 @@
+library(ggpubr)  #package for combining plots in a single image 
+library(ggplot) #package for plotting
+library(survival) # package for modeling
+library(hommel) # for the hommel p values
+test = read.csv("~/final.csv") #This is my version of the excel file
+# This is the main Idea, we will run a survival regression then make a prediction of what is
+# the mean given our model for each level of probability plus the confidence intervals. 
+# Then we are going to make a table for the difference in means with it's respective calculations
+#### See the AIC to test what distribution is better ####
+# first we list all the possible distributions and then make a loop printing the AIC
+dist = c("weibull", "exponential", "gaussian", "logistic","lognormal", "loglogistic") 
+for (i in 1:length(dist)){
+  m= survreg(Surv(Result)~ factor(round)+factor(control)+factor(day), dist=dist[i], data = test)  
+  print(paste0("AIC ", dist[i], ": ", extractAIC(m)[2]))
+}
+#this indicates that we should use logistic, but in the next lines we use loglogistic following the paper
+#### WRITING THE MODEL ####
+# we have to make the outcome (latency time, a survival variable, but we assume that all of 
+# the mouses survived because we don't have other data), and we explain the difference in the
+# latency by the treatement, the day, and the round of swiming if you have wich rats did 
+# reach the platform in (it should be a dichotomous variable) change the model like this:
+# model1 = survreg(Surv(Result, NEW_VARIABLE)~factor(control)+factor(round)+factor(day), 
+#                 dist="loglogistic", data = test)
+
+model1 = survreg(Surv(Result)~factor(control)+factor(round)+factor(day), 
+                 dist="loglogistic", data = test)
+# we are going to make 20 plots by hand because it's literally 7 minutes (I measured it)
+# we could autumate it eval on the line plotPart54 I don't like evals but it's the only
+# way of dinamucally generatte the plots inside of a loop using the function eval
+# it should be a loop inside of a loop where  the last line is 
+  # eval(parse(text=paste0("plotPart",i,j,"= ggplot(plotData, aes(x = fit, y = Probability, 
+  # color = factor(control)) )+ geom_line(aes(x = fit))+
+  # geom_ribbon( aes(xmin = lwr, xmax = upr, color = factor(control)), alpha=0.2, linetype = 0)+
+  # coord_cartesian(xlim =c(0, 91), ylim = c(0, 100)) + 
+  # scale_colour_discrete(name  =NULL,
+  #                         breaks=c(0, 1),
+  #                         labels=c('OSAS', 'Control'))+ 
+  #   ggtitle(title) + 
+  #  labs(y='Probability (%)', x = 'Escape latency(s)')")))
+
+i= 1 # day
+j= 1 # round
+    # we first make the prediction of the control 
+    pred1 <-as.data.frame(predict(model1, newdata=list(round=j, control=1, day = i),type="quantile",p=seq(.01,.99,by=.01), se=TRUE))
+    pred1$Probability = 1:99 # we create the probability variable
+    pred1$lwr = pred1$fit-1.96*pred1$se.fit #lower level confidence interval. if want to 
+    # change meassure change the z level that is 1.96. As you know the usuals are 1.645 1.96 
+    # 2.575 being 90%, 95%, and 99% confidence
+    pred1$upr = pred1$fit+1.96*pred1$se.fit # same that aboove
+    pred1$control=1 # we created a dummy variable to indicate this probabilitys are for treatement
+    #the next lines are exacly the same than above but for the OSAS, as you notice the name 
+    # of the variable change but the code is the same
+    pred0 <-as.data.frame(predict(model1, newdata=list(round=j, control=0, day = i),type="quantile",p=seq(.01,.99,by=.01), se=TRUE))
+    pred0$Probability = 1:99
+    pred0$lwr = pred0$fit-1.96*pred0$se.fit
+    pred0$upr = pred0$fit+1.96*pred0$se.fit
+    pred0$control=0
+    # we create a single dataframe with both predictions
+    plotData = rbind(pred0, pred1)
+    title = paste0("Day ",i,", Swim ", j) # this is the title of each individual plot
+    plotPart54 = ggplot(plotData, aes(x = fit, y = Probability, color = factor(control)) )+
+      geom_line(aes(x = fit))+ # we plot the central line 
+      # the next line geom_ribon creates the confidence interval shadow
+      geom_ribbon( aes(xmin = lwr, xmax = upr, color = factor(control)), alpha=0.2, linetype = 0)+
+      # we want to show the plot only to 90 seconds, and here it is 
+      coord_cartesian(xlim =c(0, 90), ylim = c(0, 100)) + 
+      # we want the labels be OSAS and Control instead of 0 and 1 and no title
+      scale_colour_discrete(name  =NULL,
+                            breaks=c(0, 1),
+                            labels=c("OSAS", "Control"))+ 
+      # add the title to the plot
+      ggtitle(title) + 
+      # change the axis labels
+      labs(y="Probability (%)", x = "Escape latency(s)")
+# if you make it in a loop this is wehre it should end
+# the next line just add all the plots into a single one with a common legend 
+figure <- ggarrange(plotPart11, plotPart12, plotPart13, plotPart14,
+                    plotPart21, plotPart22, plotPart23, plotPart24,
+                    plotPart31, plotPart32, plotPart33, plotPart34,
+                    plotPart41, plotPart42, plotPart43, plotPart44,
+                    plotPart51, plotPart52, plotPart53, plotPart54,
+                    ncol = 4, nrow = 5,
+                    common.legend = TRUE, legend = "bottom")
+figure
+
+#### CREATE THE TABLE ####
+# We first create a matrix of the size we want
+result = matrix(data = NA, nrow = 20, ncol = 9)
+result[,1] <- rep(1:5, each=4) # populate the days column repeating 1 to 5 each number 4 times
+result[,2] <- rep(1:4) # populate the round column repeating the sequence 1 to 4 
+#loop to though the matrix
+for (i in 1:NROW(result)){
+  # predict the expected mean for the given swim day and round for control
+    pred1 <-as.data.frame(predict(model1, newdata=list(round=result[i,2], control=1, 
+                                                       day = result[i,1]),
+                                  type="quantile",p=.5, se=TRUE))
+    # predict the expected mean for the given swim day and round for test
+    pred0 <-as.data.frame(predict(model1, newdata=list(round=result[i,2], control=0, 
+                                                       day = result[i,1]),
+                                  type="quantile",p=.5, se=TRUE))
+    result[i,3] = pred0$fit-pred1$fit # calculate the difference in means
+    result[i,4] = sqrt((pred0$se.fit^2)/10+(pred1$se.fit^2)/10) #calculate the standard error of the difference
+    result[i,5] = pred0$fit/pred1$fit # ratio of the expected mean
+    result[i,6] = result[i,3]-1.96*result[i,4] # Lower bound confidence interval of the difference 
+    result[i,7] = result[i,3]+1.96*result[i,4] # Upper bound confidence interval of the difference 
+    result[i,8] = pnorm((0-result[i,3])/result[i,4]) # pvalue 
+    result[i,9] = hommel(result[i,8], simes=TRUE)@adjusted # hommel p value
+  }
+result = as.data.frame(result) # we transform it into a dataframe so we can name the columns
+#with the array names
+names = c("Day","Swim","estimate","SE","exp(estimate)","CI95Min","CI95Max","p-value","Hommel")
+colnames(result) = names # we just set the columns names as we want
+write.csv(result, "Results.csv") # export it to csv
